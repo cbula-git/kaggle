@@ -6,10 +6,14 @@ class ZoneCoverage:
     """Defines standard zone coverage areas on the field"""
     
     @staticmethod
-    def get_cover3_zones(los: float, field_width: float = 53.3) -> Dict:
+    def get_cover3_zones(field_width: float, los: float) -> Dict:
         """
         Define Cover 3 zone responsibilities
         Field is 53.3 yards wide, zones defined from line of scrimmage
+
+        Args:
+            field_width: Width of the field in yards (typically 53.3)
+            los: Line of scrimmage position
         """
         zones = {
             # Deep thirds (15+ yards from LOS)

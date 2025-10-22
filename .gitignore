@@ -42,3 +42,9 @@ Thumbs.db
 local_libs/
 *.csv
 !sample_*.csv
+test_*.py
+*.png
+*.jpg
+*.gif
+!docs/**/*.png
+!docs/**/*.jpg
