@@ -17,6 +17,11 @@ kaggle/
 │   │   └── loader.py              # NFLDataLoader class
 │   ├── exploration/               # Data exploration
 │   │   └── explorer.py            # NFLDataExplorer class
+│   ├── coverage/                  # Coverage analysis
+│   │   ├── coverage_area_analyzer.py  # Zone stress, route synergy
+│   │   ├── zone_coverage.py       # Cover 2/3 definitions
+│   │   ├── viz.py                 # Coverage visualizations
+│   │   └── run.py                 # Analysis runners
 │   ├── animation/                 # Play visualization (future)
 │   └── utils/                     # Shared utilities
 │       └── metrics.py             # Distance, separation, etc.
@@ -37,7 +42,9 @@ kaggle/
 │   ├── raw/                       # Raw Kaggle data
 │   └── consolidated/              # Consolidated outputs
 ├── requirements.txt               # Package dependencies
-└── setup.py                       # Package installation
+├── setup.py                       # Package installation
+├── CLAUDE.md                      # This file
+└── MIGRATION.md                   # Migration guide
 ```
 
 ## Installation and Setup
