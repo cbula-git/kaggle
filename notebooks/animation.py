@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import pandas as pd
 import numpy as np
+import math
 from matplotlib.patches import Rectangle
 from textwrap import wrap
 
@@ -85,17 +86,30 @@ ax.set_xticks(
 ax.add_patch(Rectangle((0, 0), 10, 53.3, facecolor='green', alpha=0.2))
 ax.add_patch(Rectangle((110, 0), 10, 53.3, facecolor='green', alpha=0.2))
 
+# helper function
+def distance(x1, y1, x2, y2):
+    xcmp = (x2 - x1) ** 2
+    ycmp = (y2 - y1) ** 2
+    return math.sqrt(xcmp + ycmp)
+
+# derived 
+passer = play_df.loc[play_df['player_role'] == 'Passer'][['x', 'y']].iloc[-1]
+football = play_df[['ball_land_x', 'ball_land_y']].iloc[-1]
+passer_to_ball = distance(passer.iloc[0], passer.iloc[1], football.iloc[0], football.iloc[1])
+
 # info text
 home_team = f"home = {s_df['home_team_abbr'].iloc[0]}"
 away_team = f"away = {s_df['visitor_team_abbr'].iloc[0]}"
 route_of_receiver = f"route = {s_df['route_of_targeted_receiver'].iloc[0]}"
+pass_length = f"pass_length = {round(s_df['pass_length'].iloc[0] + s_df['dropback_distance'].iloc[0], 4)}"
+pass_length_1 = f"{round(passer_to_ball, 4)}"
 yards_gained = f"yards_gained = {s_df['yards_gained'].iloc[0]}"
 team_coverage = f"coverage = {s_df['team_coverage_type'].iloc[0]}"
 
 
 plt.figtext(
     0.07, 0.015, 
-    f"{home_team} ; {away_team}\n{route_of_receiver} ; {yards_gained}\n{team_coverage}", 
+    f"{home_team} ; {away_team}\n{route_of_receiver} ; {pass_length}:{pass_length_1} ; {yards_gained}\n{team_coverage}", 
     wrap=False, 
     horizontalalignment='left', 
     fontsize=10
@@ -151,7 +165,7 @@ def init():
             player_df['y'].iloc[0], 
             color=mfmt[player_df['player_role'].iloc[0]][0],
             linestyle=mfmt[player_df['player_role'].iloc[0]][1],
-            label=player_df['player_name'].iloc[0]
+            label=f"{player_df['player_name'].iloc[0]}; Wt:{player_df['player_weight'].iloc[0]} lbs"
         )[0]
 
     return list(path_tracer.values())

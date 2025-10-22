@@ -1,3 +1,44 @@
+# IDE
 .idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+_env/
+venv/
+ENV/
+env/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Data directories
+data/raw/
+data/consolidated/
+visualizations/
+
+# Legacy directory names (for backward compatibility during transition)
 114239_nfl_competition_files_published_analytics_final/
 consolidated_data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local test files
+local_libs/
+*.csv
+!sample_*.csv
