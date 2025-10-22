@@ -9,135 +9,141 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from matplotlib.patches import Circle, Rectangle, FancyBboxPatch
+from matplotlib.patches import Circle, Rectangle, FancyBboxPatch, Polygon
 from matplotlib.collections import LineCollection
 import seaborn as sns
+from typing import Dict, List, Tuple, Optional
+from itertools import combinations
+
 from .coverage_area_analyzer import CoverageAreaAnalyzer
 from .zone_coverage import ZoneCoverage
-from typing import Dict, List, Tuple
+from .plot_utils import CoveragePlotHelper
+from . import config
 
 # Set style
 plt.style.use('seaborn-v0_8-darkgrid')
 sns.set_palette("husl")
 
+
 class CoverageVisualizer:
-    """Visualize coverage area maximization concepts"""
-    
+    """
+    Visualize coverage area maximization concepts.
+
+    This class creates detailed visualizations showing zone stress,
+    route synergy, and defender burden in defensive coverage scenarios.
+
+    Attributes:
+        analyzer: CoverageAreaAnalyzer instance for analysis
+        plot_helper: CoveragePlotHelper for plotting operations
+        field_width: Width of field in yards
+        los: Line of scrimmage position
+    """
+
     def __init__(self, analyzer: CoverageAreaAnalyzer):
+        """
+        Initialize the coverage visualizer.
+
+        Args:
+            analyzer: CoverageAreaAnalyzer instance with play data
+        """
         self.analyzer = analyzer
-        self.field_width = 53.3
+        self.plot_helper = CoveragePlotHelper()
+        self.field_width = config.FIELD_WIDTH
         self.los = analyzer.los
         
     def plot_zone_coverage_map(self, frame_id: int, coverage_type: str = 'cover3'):
-        """Plot the field with zone responsibilities overlaid"""
-        
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8))
-        
+        """
+        Plot the field with zone responsibilities overlaid.
+
+        Args:
+            frame_id: Frame number to visualize
+            coverage_type: Type of coverage ('cover2' or 'cover3')
+
+        Returns:
+            matplotlib Figure object
+        """
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=config.FIGSIZE_DOUBLE_WIDE)
+
         # Get frame data
         off_frame = self.analyzer.offense_data[self.analyzer.offense_data['frame_id'] == frame_id]
         def_frame = self.analyzer.defense_data[self.analyzer.defense_data['frame_id'] == frame_id]
-        
+
         # Get zones
         if coverage_type == 'cover3':
             zones = ZoneCoverage.get_cover3_zones(self.field_width, self.los)
         else:
             zones = ZoneCoverage.get_cover2_zones(self.field_width, self.los)
-        
+
         # Left plot: Zone definitions and player positions
-        ax1.set_title(f'{coverage_type.upper()} Zone Coverage - Frame {frame_id}', fontsize=14, fontweight='bold')
-        
-        # Draw field
-        ax1.axhline(y=0, color='white', linewidth=2)
-        ax1.axhline(y=self.field_width, color='white', linewidth=2)
-        ax1.axvline(x=self.los, color='yellow', linewidth=2, label='Line of Scrimmage')
-        
+        title = f'{coverage_type.upper()} Zone Coverage - Frame {frame_id}'
+        self.plot_helper.setup_field_axes(ax1, self.los, self.field_width, title)
+        self.plot_helper.draw_field_boundaries(ax1, self.los, self.field_width)
+
         # Draw zones with transparency
         colors = plt.cm.Set3(np.linspace(0, 1, len(zones)))
         for (zone_name, zone_def), color in zip(zones.items(), colors):
-            rect = Rectangle(
-                (zone_def['x_range'][0], zone_def['y_range'][0]),
-                zone_def['x_range'][1] - zone_def['x_range'][0],
-                zone_def['y_range'][1] - zone_def['y_range'][0],
-                alpha=0.3, facecolor=color, edgecolor='black', linewidth=1
-            )
-            ax1.add_patch(rect)
-            
-            # Add zone label
-            cx = (zone_def['x_range'][0] + zone_def['x_range'][1]) / 2
-            cy = (zone_def['y_range'][0] + zone_def['y_range'][1]) / 2
-            ax1.text(cx, cy, zone_name.replace('_', '\n'), 
-                    ha='center', va='center', fontsize=8, fontweight='bold')
-        
-        # Plot offensive players
-        for _, player in off_frame.iterrows():
-            if player['player_position'] in ['WR', 'TE', 'RB']:
-                ax1.scatter(player['x'], player['y'], s=150, c='blue', 
-                          marker='^', edgecolor='white', linewidth=2, zorder=5)
-                ax1.text(player['x'], player['y']-1.5, player['player_name'].split()[-1],
-                        ha='center', fontsize=8, fontweight='bold')
-            elif player['player_position'] == 'QB':
-                ax1.scatter(player['x'], player['y'], s=150, c='darkblue', 
-                          marker='s', edgecolor='white', linewidth=2, zorder=5)
-        
-        # Plot defensive players
-        for _, player in def_frame.iterrows():
-            ax1.scatter(player['x'], player['y'], s=150, c='red', 
-                      marker='o', edgecolor='white', linewidth=2, zorder=5)
-            ax1.text(player['x'], player['y']+1.5, 
-                    f"{player['player_name'].split()[-1]}\n({player['player_position']})",
-                    ha='center', fontsize=7)
-        
-        ax1.set_xlim(self.los - 5, self.los + 35)
-        ax1.set_ylim(-2, self.field_width + 2)
-        ax1.set_xlabel('Field Position (yards)', fontsize=11)
-        ax1.set_ylabel('Field Width (yards)', fontsize=11)
-        ax1.grid(True, alpha=0.3)
+            self.plot_helper.draw_zone(ax1, zone_def, color, label=zone_name)
+
+        # Plot players using helper methods
+        self.plot_helper.plot_offensive_players(ax1, off_frame, marker_size=config.MARKER_SIZE_MEDIUM)
+        self.plot_helper.plot_defensive_players(ax1, def_frame, marker_size=config.MARKER_SIZE_MEDIUM)
         
         # Right plot: Zone stress heatmap
-        ax2.set_title('Zone Stress Analysis', fontsize=14, fontweight='bold')
-        
+        self.plot_helper.setup_field_axes(ax2, self.los, self.field_width, 'Zone Stress Analysis')
+
         zone_stress = self.analyzer.calculate_zone_stress(frame_id, coverage_type)
-        
+
         # Create stress grid
         x_bins = np.linspace(self.los, self.los + 30, 7)
         y_bins = np.linspace(0, self.field_width, 7)
         stress_grid = np.zeros((len(y_bins)-1, len(x_bins)-1))
-        
+
         for zone_name, stress_data in zone_stress.items():
             zone_def = zones[zone_name]
             x_idx = np.digitize((zone_def['x_range'][0] + zone_def['x_range'][1])/2, x_bins) - 1
             y_idx = np.digitize((zone_def['y_range'][0] + zone_def['y_range'][1])/2, y_bins) - 1
-            
+
             if 0 <= x_idx < stress_grid.shape[1] and 0 <= y_idx < stress_grid.shape[0]:
                 stress_grid[y_idx, x_idx] = stress_data['stress_ratio']
-        
+
         # Plot heatmap
-        im = ax2.imshow(stress_grid, cmap='YlOrRd', aspect='auto', 
-                       extent=[self.los, self.los+30, 0, self.field_width],
-                       vmin=0, vmax=2, origin='lower')
-        
-        # Add player positions on heatmap
-        for _, player in off_frame.iterrows():
-            if player['player_position'] in ['WR', 'TE', 'RB']:
-                ax2.scatter(player['x'], player['y'], s=100, c='blue', 
-                          marker='^', edgecolor='white', linewidth=2, zorder=5)
-        
+        im = ax2.imshow(
+            stress_grid,
+            cmap=config.STRESS_COLORMAP,
+            aspect='auto',
+            extent=[self.los, self.los+30, 0, self.field_width],
+            vmin=0,
+            vmax=2,
+            origin='lower'
+        )
+
+        # Add player positions on heatmap (smaller markers)
+        route_runners = off_frame[off_frame['player_position'].isin(config.ROUTE_RUNNER_POSITIONS)]
+        self.plot_helper.plot_offensive_players(
+            ax2, route_runners,
+            show_labels=False,
+            marker_size=config.MARKER_SIZE_SMALL
+        )
+
+        # Plot defenders in white for contrast on heatmap
         for _, player in def_frame.iterrows():
-            ax2.scatter(player['x'], player['y'], s=100, c='white', 
-                      marker='o', edgecolor='black', linewidth=2, zorder=5)
-        
-        ax2.set_xlim(self.los - 5, self.los + 35)
-        ax2.set_ylim(-2, self.field_width + 2)
-        ax2.set_xlabel('Field Position (yards)', fontsize=11)
-        ax2.set_ylabel('Field Width (yards)', fontsize=11)
-        
+            ax2.scatter(
+                player['x'], player['y'],
+                s=config.MARKER_SIZE_SMALL,
+                c='white',
+                marker=config.DEFENSIVE_MARKER,
+                edgecolor='black',
+                linewidth=2,
+                zorder=5
+            )
+
         # Add colorbar
         cbar = plt.colorbar(im, ax=ax2)
         cbar.set_label('Zone Stress Ratio', fontsize=10)
-        
+
         plt.suptitle('Coverage Area Maximization Analysis', fontsize=16, fontweight='bold', y=1.02)
         plt.tight_layout()
-        
+
         return fig
     
     def plot_route_synergy_analysis(self, frame_id: int):
