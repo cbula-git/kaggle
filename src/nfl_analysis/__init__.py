@@ -21,6 +21,8 @@ from nfl_analysis.io.loader import NFLDataLoader
 from nfl_analysis.exploration.explorer import NFLDataExplorer
 from nfl_analysis.coverage.coverage_area_analyzer import CoverageAreaAnalyzer
 from nfl_analysis.coverage.zone_coverage import ZoneCoverage
+from nfl_analysis.animation.animator import PlayAnimator
+from nfl_analysis.animation.field_renderer import FieldRenderer
 
 __all__ = [
     "NFLDataConsolidator",
@@ -28,4 +30,6 @@ __all__ = [
     "NFLDataExplorer",
     "CoverageAreaAnalyzer",
     "ZoneCoverage",
+    "PlayAnimator",
+    "FieldRenderer",
 ]

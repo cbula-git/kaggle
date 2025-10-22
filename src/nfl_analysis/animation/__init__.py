@@ -4,5 +4,10 @@ Animation module for NFL tracking data.
 This module provides functionality to animate and visualize plays.
 """
 
-# Animation functionality will be added here
-__all__ = []
+from .animator import PlayAnimator
+from .field_renderer import FieldRenderer
+
+__all__ = [
+    'PlayAnimator',
+    'FieldRenderer',
+]

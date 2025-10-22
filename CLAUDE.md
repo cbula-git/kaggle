@@ -22,13 +22,16 @@ kaggle/
 │   │   ├── zone_coverage.py       # Cover 2/3 definitions
 │   │   ├── viz.py                 # Coverage visualizations
 │   │   └── run.py                 # Analysis runners
-│   ├── animation/                 # Play visualization (future)
+│   ├── animation/                 # Play visualization
+│   │   ├── animator.py            # PlayAnimator class
+│   │   ├── field_renderer.py     # FieldRenderer for drawing fields
+│   │   └── config.py              # Styling and configuration
 │   └── utils/                     # Shared utilities
 │       └── metrics.py             # Distance, separation, etc.
 ├── scripts/                       # CLI entry points
 │   ├── consolidate.py             # Data consolidation CLI
 │   ├── explore.py                 # Data exploration CLI
-│   └── animate.py                 # Animation CLI (stub)
+│   └── animate.py                 # Animation CLI
 ├── tests/                         # Test suite
 │   ├── conftest.py                # Pytest fixtures
 │   ├── test_metrics.py            # Metrics tests
@@ -160,11 +163,33 @@ jupyter notebook
 ### Play Animation
 
 ```bash
-# Animate a specific play
+# Using CLI script (recommended)
+python scripts/animate.py <game_id> <play_id>
+
+# Save to file
+python scripts/animate.py 2023090700 1679 --save play.mp4
+
+# Save as GIF with custom settings
+python scripts/animate.py 2023090700 1679 --save play.gif --fps 5 --interval 150
+
+# Custom pause time when displaying
+python scripts/animate.py 2023090700 1679 --pause 60
+
+# Using notebook script (alternative)
 python notebooks/animation.py <game_id> <play_id>
 
 # Example:
 python notebooks/animation.py 2023090700 1679
+
+# Using package directly in Python
+from nfl_analysis import PlayAnimator
+
+animator = PlayAnimator(data_dir='data/consolidated')
+ani = animator.create_animation(game_id=2023090700, play_id=1679)
+animator.show(ani, pause_time=30)
+
+# Or save it
+animator.save(ani, 'my_play.mp4', fps=10)
 ```
 
 ## Architecture and Design Patterns
@@ -271,11 +296,37 @@ See `notebooks/derived_metrics.ipynb` for examples of:
 - Min/max/mean separation by player and game
 
 ### Animation Workflow
-The `notebooks/animation.py` script demonstrates:
-- Loading play data for specific game_id and play_id
-- Merging input/output data with supplementary context
-- Creating matplotlib animations of player movements
-- Color coding by player role with trajectories
+The animation module (`nfl_analysis.animation`) provides:
+- `PlayAnimator` class for creating play animations
+- `FieldRenderer` class for drawing NFL fields with proper dimensions
+- Automatic loading and merging of play data
+- Color-coded player roles and trajectories
+- Configurable styling via `animation.config`
+
+**Animation Features:**
+- Displays complete player paths (pre-pass and post-pass)
+- Shows ball landing position
+- Includes play description and game context
+- Supports saving to video (MP4, GIF, etc.)
+- Customizable frame rate and timing
+
+**Example Usage:**
+```python
+from nfl_analysis import PlayAnimator, FieldRenderer
+
+# Basic usage
+animator = PlayAnimator(data_dir='data/consolidated')
+ani = animator.create_animation(game_id=2023090700, play_id=1679)
+animator.show(ani)
+
+# Custom field size
+custom_renderer = FieldRenderer(figsize=(16, 8))
+animator = PlayAnimator(data_dir='data/consolidated', field_renderer=custom_renderer)
+
+# Create and save
+ani = animator.create_animation(game_id=2023090700, play_id=1679, interval=100)
+animator.save(ani, 'amazing_play.gif', fps=10)
+```
 
 ### Feature Engineering
 Notebooks explore various features:
@@ -305,5 +356,6 @@ If transitioning from the old structure:
 Use the new package imports:
 ```python
 from nfl_analysis import NFLDataConsolidator, NFLDataLoader, NFLDataExplorer
+from nfl_analysis import PlayAnimator, FieldRenderer
 from nfl_analysis.utils.metrics import calculate_distance, calculate_separation
 ```
