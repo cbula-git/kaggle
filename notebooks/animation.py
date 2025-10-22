@@ -1,188 +1,99 @@
-import matplotlib
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-import pandas as pd
-import numpy as np
-import math
-from matplotlib.patches import Rectangle
-from textwrap import wrap
+"""
+NFL Play Animation Script (Refactored)
+
+This script now uses the PlayAnimator class from the nfl_analysis package.
+It provides a simple interface for animating plays using consolidated data.
+
+Usage:
+    python animation.py <game_id> <play_id>
+
+Example:
+    python animation.py 2023090700 1679
+"""
 
 import sys
+from pathlib import Path
+
+# Add parent directory to path to import from package
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from nfl_analysis import PlayAnimator
+
+
+def main():
+    """Main entry point for animation script."""
+    # Check command-line arguments
+    if len(sys.argv) < 3:
+        print("Usage: python animation.py <game_id> <play_id>")
+        print("Example: python animation.py 2023090700 1679")
+        sys.exit(1)
+
+    print(f"Script name: {sys.argv[0]}")
+    print("Arguments provided:")
+    print(f"  Game ID: {sys.argv[1]}")
+    print(f"  Play ID: {sys.argv[2]}")
+
+    # Parse arguments
+    try:
+        game_id = int(sys.argv[1].strip())
+        play_id = int(sys.argv[2].strip())
+    except ValueError as e:
+        print(f"Error: Game ID and Play ID must be integers. {e}")
+        sys.exit(1)
+
+    # Determine data directory
+    # Check both old path (for backward compatibility) and new path
+    script_dir = Path(__file__).parent
+    old_data_dir = script_dir.parent / "consolidated_data"
+    new_data_dir = script_dir.parent / "data" / "consolidated"
+
+    if new_data_dir.exists():
+        data_dir = str(new_data_dir)
+    elif old_data_dir.exists():
+        data_dir = str(old_data_dir)
+    else:
+        print("Error: Could not find consolidated data directory.")
+        print(f"Tried: {new_data_dir}")
+        print(f"Tried: {old_data_dir}")
+        sys.exit(1)
+
+    print(f"Using data directory: {data_dir}")
+
+    try:
+        # Create animator using the package
+        print("\nCreating animator...")
+        animator = PlayAnimator(data_dir=data_dir)
+
+        # Create animation
+        print(f"Loading play data for Game {game_id}, Play {play_id}...")
+        ani = animator.create_animation(
+            game_id=game_id,
+            play_id=play_id,
+            interval=200,  # 200ms between frames
+            repeat=False
+        )
+
+        # Display animation
+        print("Displaying animation (will show for 30 seconds)...")
+        animator.show(ani, pause_time=30)
+
+        print("\nAnimation complete!")
+        return 0
+
+    except FileNotFoundError as e:
+        print(f"\nError: Could not find data for the specified play.")
+        print(f"Details: {e}")
+        return 1
+    except KeyError as e:
+        print(f"\nError: Missing required data column.")
+        print(f"Details: {e}")
+        return 1
+    except Exception as e:
+        print(f"\nError creating animation: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
 
 if __name__ == "__main__":
-    print(f"Script name: {sys.argv[0]}")
-    if len(sys.argv) > 1:
-        print("Arguments provided:")
-        print(f"Game ID: {sys.argv[1]}")
-        print(f"Play ID: {sys.argv[2]}")
-    else:
-        print("No command-line arguments provided.")
-
-base_dir = "../consolidated_data/"
-
-game_id = sys.argv[1].strip()
-play_id = sys.argv[2].strip()
-
-play_keys = ['game_id', 'play_id']
-player_keys = play_keys + ['nfl_id']
-player_dtls = ['player_name', 'player_height', 'player_weight', 'player_birth_date', 'player_position', 'player_side', 'player_role']
-player_mvmt = ['frame_id', 'x', 'y']
-
-input_cols = player_keys + player_dtls + player_mvmt + ['player_to_predict', 'play_direction', 'absolute_yardline_number', 's', 'a', 'dir', 'o', 'num_frames_output', 'ball_land_x', 'ball_land_y', 'week']
-input_df = pd.read_parquet(f'{base_dir}/master_input.parquet')
-
-output_cols = player_keys + player_mvmt
-output_df = pd.read_parquet(f'{base_dir}/master_output.parquet')
-
-supp_df = pd.read_parquet(f'{base_dir}/supplementary.parquet')
-
-output_xdf = pd.merge(
-    output_df[output_cols], 
-    input_df[player_keys + player_dtls].drop_duplicates(), 
-    on=player_keys, 
-    how='left'
-)
-
-fmt = {
-    "Defensive Coverage": ['red', 'x'],
-    "Other Route Runner": ['blue', 'o'],
-    "Passer": ['navy', 'o'],
-    "Targeted Receiver": ['cyan', 'o'],
-    "Ball": ['black', 'X']
-}
-
-mfmt = {
-    "Defensive Coverage": ['red', '-'],
-    "Other Route Runner": ['blue', '-'],
-    "Passer": ['navy', '-'],
-    "Targeted Receiver": ['cyan', '-']
-}
-
-ball = "Ball"
-
-play_df = input_df.query(f"game_id == {game_id} and play_id == {play_id}")
-oplay_df = output_xdf.query(f"game_id == {game_id} and play_id == {play_id}")
-s_df = supp_df.query(f"game_id == {game_id} and play_id == {play_id}")
-
-fig, ax = plt.subplots(figsize=(14,7))
-
-# Configure chart
-ax.set(xlim=[0, 120], ylim=[0, 53.3])
-
-title = "\n".join(wrap(s_df['play_description'].iloc[0], 100))
-ax.set_title(f"{title}")
-ax.set_facecolor('#2E8B57')
-
-# add field markings
-for yard in range(10, 111, 10):
-    ax.axvline(x=yard, color='white', linestyle='-', linewidth=0.5, alpha=0.5)
-
-ax.set_xticks(
-    ticks=[x for x in range(0, 130, 10)], 
-    labels=['', '', 10, 20, 30, 40, 50, 40, 30, 20, 10, '', '']
-)
-
-# add end zones
-ax.add_patch(Rectangle((0, 0), 10, 53.3, facecolor='green', alpha=0.2))
-ax.add_patch(Rectangle((110, 0), 10, 53.3, facecolor='green', alpha=0.2))
-
-# helper function
-def distance(x1, y1, x2, y2):
-    xcmp = (x2 - x1) ** 2
-    ycmp = (y2 - y1) ** 2
-    return math.sqrt(xcmp + ycmp)
-
-# derived 
-passer = play_df.loc[play_df['player_role'] == 'Passer'][['x', 'y']].iloc[-1]
-football = play_df[['ball_land_x', 'ball_land_y']].iloc[-1]
-passer_to_ball = distance(passer.iloc[0], passer.iloc[1], football.iloc[0], football.iloc[1])
-
-# info text
-home_team = f"home = {s_df['home_team_abbr'].iloc[0]}"
-away_team = f"away = {s_df['visitor_team_abbr'].iloc[0]}"
-route_of_receiver = f"route = {s_df['route_of_targeted_receiver'].iloc[0]}"
-pass_length = f"pass_length = {round(s_df['pass_length'].iloc[0] + s_df['dropback_distance'].iloc[0], 4)}"
-pass_length_1 = f"{round(passer_to_ball, 4)}"
-yards_gained = f"yards_gained = {s_df['yards_gained'].iloc[0]}"
-team_coverage = f"coverage = {s_df['team_coverage_type'].iloc[0]}"
-
-
-plt.figtext(
-    0.07, 0.015, 
-    f"{home_team} ; {away_team}\n{route_of_receiver} ; {pass_length}:{pass_length_1} ; {yards_gained}\n{team_coverage}", 
-    wrap=False, 
-    horizontalalignment='left', 
-    fontsize=10
-)
-
-num_iframes = play_df['frame_id'].max()
-num_oframes = oplay_df['frame_id'].max()
-
-oplay_df.loc[:, ('frame_id')] = oplay_df['frame_id'] + num_iframes
-
-iframes = [x for x in range(num_iframes)]
-oframes = [x for x in range(num_oframes)]
-frames = [x for x in range(num_iframes+num_oframes)]
-
-# plot ball position
-ax.plot(
-    play_df['ball_land_x'].iloc[0], 
-    play_df['ball_land_y'].iloc[0], 
-    color=fmt[ball][0],
-    marker=fmt[ball][1]
-)
-
-# plot starting positions
-union_df = pd.concat([play_df[oplay_df.columns], oplay_df]).sort_values(by=['nfl_id', 'frame_id'])
-ogrouped = oplay_df.groupby('nfl_id')
-grouped = union_df.groupby('nfl_id')
-
-path_tracer = {}
-
-# Player marker - before pass
-for player_id, player_df in grouped:
-    ax.plot(
-        player_df['x'].iloc[0], 
-        player_df['y'].iloc[0], 
-        color=fmt[player_df['player_role'].iloc[0]][0],
-        marker=fmt[player_df['player_role'].iloc[0]][1],
-    )
-
-# Player marker - after pass
-for player_id, player_df in ogrouped:
-    ax.plot(
-        player_df['x'].iloc[0], 
-        player_df['y'].iloc[0], 
-        color=fmt[player_df['player_role'].iloc[0]][0],
-        marker='.',
-    )
-
-def init():
-    # Path tracer
-    for player_id, player_df in grouped:
-        path_tracer[player_id] = ax.plot(
-            player_df['x'].iloc[0], 
-            player_df['y'].iloc[0], 
-            color=mfmt[player_df['player_role'].iloc[0]][0],
-            linestyle=mfmt[player_df['player_role'].iloc[0]][1],
-            label=f"{player_df['player_name'].iloc[0]}; Wt:{player_df['player_weight'].iloc[0]} lbs"
-        )[0]
-
-    return list(path_tracer.values())
-
-    
-def update(frame):
-    # Path tracer
-    for player_id, player_df in grouped:
-        path_tracer[player_id].set_data(player_df['x'].iloc[:frame+1], player_df['y'].iloc[:frame+1])
-        path_tracer[player_id].set_color(mfmt[player_df['player_role'].iloc[0]][0])
-        path_tracer[player_id].set_linestyle(mfmt[player_df['player_role'].iloc[0]][1])
-    return list(path_tracer.values())
-
-ani = animation.FuncAnimation(fig=fig, func=update, init_func=init, frames=frames, interval=200, blit=True, repeat=False)
-
-
-plt.legend(loc='upper left')
-plt.show(block=False)
-
-plt.pause(30)
+    sys.exit(main())
