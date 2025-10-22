@@ -9,6 +9,7 @@ This package provides tools for:
 - Exploratory data analysis
 - Play animation and visualization
 - Feature engineering utilities
+- Coverage analysis and defensive metrics
 """
 
 __version__ = "0.1.0"
@@ -18,9 +19,13 @@ __author__ = "NFL Analysis Team"
 from nfl_analysis.consolidation.consolidator import NFLDataConsolidator
 from nfl_analysis.io.loader import NFLDataLoader
 from nfl_analysis.exploration.explorer import NFLDataExplorer
+from nfl_analysis.coverage.coverage_area_analyzer import CoverageAreaAnalyzer
+from nfl_analysis.coverage.zone_coverage import ZoneCoverage
 
 __all__ = [
     "NFLDataConsolidator",
     "NFLDataLoader",
     "NFLDataExplorer",
+    "CoverageAreaAnalyzer",
+    "ZoneCoverage",
 ]
