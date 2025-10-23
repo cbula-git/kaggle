@@ -15,8 +15,8 @@ import seaborn as sns
 from typing import Dict, List, Tuple, Optional
 from itertools import combinations
 
-from .coverage_area_analyzer import CoverageAreaAnalyzer
-from .zone_coverage import ZoneCoverage
+from ..coverage.coverage_area_analyzer import CoverageAreaAnalyzer
+from ..coverage.zone_coverage import ZoneCoverage
 from .plot_utils import CoveragePlotHelper
 from . import config
 
@@ -526,3 +526,213 @@ class CoverageVisualizer:
                 autotext.set_fontweight('bold')
         else:
             ax.text(0.5, 0.5, 'No defender data', ha='center', va='center')
+
+    def plot_pass_completion_comparison(self, game_id: int, input_df: pd.DataFrame,
+                                       output_df: pd.DataFrame, supp_df: pd.DataFrame):
+        """
+        Compare defensive positioning around targeted receivers for complete vs incomplete passes.
+
+        Shows targeted receiver at origin with defenders plotted relative to receiver position
+        at two key moments: pass release and ball landing.
+
+        Args:
+            game_id: Game identifier
+            input_df: Pre-pass tracking data for the game
+            output_df: Post-pass tracking data for the game
+            supp_df: Supplementary play data
+
+        Returns:
+            matplotlib Figure object
+        """
+        # Get all plays for this game
+        game_supp = supp_df[supp_df['game_id'] == game_id].copy()
+
+        # Separate complete and incomplete passes
+        complete_plays = game_supp[game_supp['pass_result'] == 'C']['play_id'].values
+        incomplete_plays = game_supp[game_supp['pass_result'] == 'I']['play_id'].values
+
+        print(f"Game {game_id}: {len(complete_plays)} complete, {len(incomplete_plays)} incomplete")
+
+        # Create figure with 2 rows (complete/incomplete) x 2 columns (pass release/ball landing)
+        fig, axes = plt.subplots(2, 2, figsize=(14, 14))
+
+        # Process complete passes
+        self._plot_pass_group(axes[0, :], input_df, output_df, complete_plays,
+                             'Complete Passes', 'green')
+
+        # Process incomplete passes
+        self._plot_pass_group(axes[1, :], input_df, output_df, incomplete_plays,
+                             'Incomplete Passes', 'red')
+
+        plt.suptitle(f'Defensive Coverage Comparison - Game {game_id}',
+                    fontsize=16, fontweight='bold', y=0.995)
+        plt.tight_layout()
+
+        return fig
+
+    def _plot_pass_group(self, axes, input_df, output_df, play_ids, title, color):
+        """
+        Helper to plot a group of plays (complete or incomplete) on receiver-centered scatter plots.
+
+        Args:
+            axes: Array of two matplotlib axes [pass_release_ax, ball_landing_ax]
+            input_df: Pre-pass tracking data
+            output_df: Post-pass tracking data
+            play_ids: List of play IDs to analyze
+            title: Title for the plots (e.g., 'Complete Passes')
+            color: Color for the receiver marker
+        """
+        ax_release, ax_landing = axes
+
+        all_release_defenders = []
+        all_landing_defenders = []
+
+        for play_id in play_ids:
+            # Get play data
+            play_input = input_df[input_df['play_id'] == play_id]
+            if len(play_input) == 0:
+                continue
+
+            # Get pass release frame (last input frame)
+            max_frame = play_input['frame_id'].max()
+            release_frame = play_input[play_input['frame_id'] == max_frame]
+
+            # Get targeted receiver
+            target = release_frame[release_frame['player_role'] == 'Targeted Receiver']
+            if len(target) == 0:
+                continue
+
+            target_x = target.iloc[0]['x']
+            target_y = target.iloc[0]['y']
+            ball_land_x = target.iloc[0]['ball_land_x']
+            ball_land_y = target.iloc[0]['ball_land_y']
+
+            # Get defenders at pass release (only coverage defenders)
+            defenders_release = release_frame[
+                (release_frame['player_side'] == 'Defense') &
+                (release_frame['player_to_predict'] == True)
+            ]
+            for _, defender in defenders_release.iterrows():
+                rel_x = defender['x'] - target_x
+                rel_y = defender['y'] - target_y
+                distance = np.sqrt(rel_x**2 + rel_y**2)
+                all_release_defenders.append({
+                    'rel_x': rel_x,
+                    'rel_y': rel_y,
+                    'distance': distance
+                })
+
+            # Get defender positions at ball landing (from output if available)
+            play_output = output_df[(output_df['play_id'] == play_id)]
+            if len(play_output) > 0:
+                # Find the frame closest to ball landing
+                # Estimate which output frame corresponds to ball landing
+                last_output_frame = play_output['frame_id'].max()
+                landing_frame_data = play_output[play_output['frame_id'] == last_output_frame]
+
+                # Get target receiver position at landing
+                target_at_landing = landing_frame_data[
+                    landing_frame_data['nfl_id'] == target.iloc[0]['nfl_id']
+                ]
+
+                if len(target_at_landing) > 0:
+                    target_landing_x = target_at_landing.iloc[0]['x']
+                    target_landing_y = target_at_landing.iloc[0]['y']
+                else:
+                    # Use ball landing position as proxy
+                    target_landing_x = ball_land_x
+                    target_landing_y = ball_land_y
+
+                # Get all defender positions in the landing frame
+                # Output data doesn't have player_side, so we need to get defender IDs from input
+                defender_ids = defenders_release['nfl_id'].values
+
+                for defender_id in defender_ids:
+                    defender_landing = landing_frame_data[landing_frame_data['nfl_id'] == defender_id]
+                    if len(defender_landing) > 0:
+                        def_x = defender_landing.iloc[0]['x']
+                        def_y = defender_landing.iloc[0]['y']
+                        rel_x = def_x - target_landing_x
+                        rel_y = def_y - target_landing_y
+                        distance = np.sqrt(rel_x**2 + rel_y**2)
+                        all_landing_defenders.append({
+                            'rel_x': rel_x,
+                            'rel_y': rel_y,
+                            'distance': distance
+                        })
+
+        # Plot pass release defenders
+        self._plot_defender_scatter(ax_release, all_release_defenders,
+                                   f'{title} - At Pass Release', color)
+
+        # Plot ball landing defenders
+        self._plot_defender_scatter(ax_landing, all_landing_defenders,
+                                   f'{title} - At Ball Landing', color)
+
+    def _plot_defender_scatter(self, ax, defenders, title, receiver_color):
+        """
+        Plot defenders on receiver-centered scatter plot.
+
+        Args:
+            ax: Matplotlib axis
+            defenders: List of dicts with rel_x, rel_y, distance
+            title: Plot title
+            receiver_color: Color for receiver marker
+        """
+        ax.set_title(title, fontsize=12, fontweight='bold')
+
+        if len(defenders) == 0:
+            ax.text(0, 0, 'No data available', ha='center', va='center', fontsize=12)
+            ax.set_xlim(-15, 15)
+            ax.set_ylim(-15, 15)
+            return
+
+        # Plot receiver at origin
+        ax.scatter(0, 0, s=400, c=receiver_color, marker='*',
+                  edgecolor='black', linewidth=2, zorder=10, label='Targeted Receiver')
+
+        # Plot all defenders
+        defender_x = [d['rel_x'] for d in defenders]
+        defender_y = [d['rel_y'] for d in defenders]
+        distances = [d['distance'] for d in defenders]
+
+        scatter = ax.scatter(defender_x, defender_y, s=80, c=distances,
+                           cmap='YlOrRd', marker='o', edgecolor='black',
+                           linewidth=0.5, alpha=0.6, zorder=5)
+
+        # Add distance circles
+        for radius in [3, 5, 10]:
+            circle = plt.Circle((0, 0), radius, fill=False, edgecolor='gray',
+                              linestyle='--', linewidth=1, alpha=0.3)
+            ax.add_patch(circle)
+            ax.text(radius * 0.707, radius * 0.707, f'{radius}y',
+                   fontsize=8, color='gray', alpha=0.7)
+
+        # Add colorbar for distance
+        cbar = plt.colorbar(scatter, ax=ax)
+        cbar.set_label('Distance (yards)', fontsize=9)
+
+        # Calculate statistics
+        min_dist = min(distances) if distances else 0
+        avg_dist = np.mean(distances) if distances else 0
+        median_dist = np.median(distances) if distances else 0
+
+        stats_text = f'n={len(defenders)}\nMin: {min_dist:.1f}y\nAvg: {avg_dist:.1f}y\nMedian: {median_dist:.1f}y'
+        ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
+               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
+               verticalalignment='top', fontsize=9)
+
+        # Set equal aspect and limits
+        max_range = max(abs(min(defender_x + defender_y)), abs(max(defender_x + defender_y)))
+        max_range = max(15, max_range + 2)
+        ax.set_xlim(-max_range, max_range)
+        ax.set_ylim(-max_range, max_range)
+        ax.set_aspect('equal')
+
+        # Labels and grid
+        ax.set_xlabel('Relative X Position (yards)', fontsize=10)
+        ax.set_ylabel('Relative Y Position (yards)', fontsize=10)
+        ax.grid(True, alpha=0.3, linestyle=':')
+        ax.axhline(y=0, color='black', linewidth=0.5, alpha=0.3)
+        ax.axvline(x=0, color='black', linewidth=0.5, alpha=0.3)
+        ax.legend(loc='upper right', fontsize=9)

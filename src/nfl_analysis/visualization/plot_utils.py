@@ -13,7 +13,7 @@ from matplotlib.axes import Axes
 from typing import Dict, List, Optional, Tuple
 
 from . import config
-from ..animation.field_renderer import FieldRenderer
+from .field_renderer import FieldRenderer
 
 
 class CoveragePlotHelper:

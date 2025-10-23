@@ -10,7 +10,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from nfl_analysis.animation import PlayAnimator
+from nfl_analysis.visualization import PlayAnimator
 
 
 def main():
