@@ -16,7 +16,7 @@ build/
 htmlcov/
 
 # Virtual environments
-_env/
+.venv/
 venv/
 ENV/
 env/

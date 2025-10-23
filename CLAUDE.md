@@ -19,13 +19,13 @@ kaggle/
 │   │   └── explorer.py            # NFLDataExplorer class
 │   ├── coverage/                  # Coverage analysis
 │   │   ├── coverage_area_analyzer.py  # Zone stress, route synergy
-│   │   ├── zone_coverage.py       # Cover 2/3 definitions
-│   │   ├── viz.py                 # Coverage visualizations
-│   │   └── run.py                 # Analysis runners
-│   ├── animation/                 # Play visualization
+│   │   └── zone_coverage.py       # Cover 2/3 definitions
+│   ├── visualization/             # Play visualization and plotting
 │   │   ├── animator.py            # PlayAnimator class
 │   │   ├── field_renderer.py     # FieldRenderer for drawing fields
-│   │   └── config.py              # Styling and configuration
+│   │   ├── coverage_visualizer.py # Coverage analysis plots
+│   │   ├── plot_utils.py          # Plotting helper utilities
+│   │   └── config.py              # Unified styling and configuration
 │   └── utils/                     # Shared utilities
 │       └── metrics.py             # Distance, separation, etc.
 ├── scripts/                       # CLI entry points
@@ -69,7 +69,7 @@ pip install -r requirements.txt
 
 ```bash
 # Activate virtual environment (if exists)
-source _env/bin/activate
+source .venv/bin/activate
 ```
 
 ## Common Commands
@@ -295,13 +295,15 @@ See `notebooks/derived_metrics.ipynb` for examples of:
 - Separation at ball landing time
 - Min/max/mean separation by player and game
 
-### Animation Workflow
-The animation module (`nfl_analysis.animation`) provides:
+### Visualization and Animation Workflow
+The visualization module (`nfl_analysis.visualization`) provides:
 - `PlayAnimator` class for creating play animations
 - `FieldRenderer` class for drawing NFL fields with proper dimensions
+- `CoverageVisualizer` class for coverage analysis plots
+- `CoveragePlotHelper` for reusable plotting utilities
 - Automatic loading and merging of play data
 - Color-coded player roles and trajectories
-- Configurable styling via `animation.config`
+- Unified configuration via `visualization.config`
 
 **Animation Features:**
 - Displays complete player paths (pre-pass and post-pass)
@@ -356,6 +358,7 @@ If transitioning from the old structure:
 Use the new package imports:
 ```python
 from nfl_analysis import NFLDataConsolidator, NFLDataLoader, NFLDataExplorer
-from nfl_analysis import PlayAnimator, FieldRenderer
+from nfl_analysis import PlayAnimator, FieldRenderer, CoverageVisualizer
 from nfl_analysis.utils.metrics import calculate_distance, calculate_separation
+from nfl_analysis.visualization import CoveragePlotHelper
 ```
