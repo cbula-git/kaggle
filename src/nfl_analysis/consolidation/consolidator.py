@@ -551,6 +551,372 @@ class NFLDataConsolidator:
 
         return route_trajectories
 
+    def _calculate_zone_boundaries(self, LOS: float, play_direction: str) -> Dict:
+        """
+        Calculate 15-zone boundaries relative to line of scrimmage.
+
+        Creates a 3x5 grid:
+        - 3 depth zones: shallow (0-5), intermediate (5-15), deep (15+) yards past LOS
+        - 5 lateral zones based on exact NFL hash marks
+
+        Args:
+            LOS: Line of scrimmage (absolute yardline number)
+            play_direction: Direction of play ('left' or 'right')
+
+        Returns:
+            Dictionary mapping zone_id to {x_min, x_max, y_min, y_max, center_x, center_y, area}
+        """
+        # Field dimensions
+        FIELD_WIDTH = 53.3
+        LEFT_HASH = 23.36  # Distance from left sideline to left hash
+        RIGHT_HASH = 29.64  # Distance from left sideline to right hash (53.3 - 23.36)
+
+        # Lateral zone boundaries (y-coordinates, constant across all plays)
+        # Based on hash marks
+        HASH_BUFFER = 5.0  # Yards around hash marks for hash zones
+
+        lateral_zones = {
+            'far_left': {
+                'y_min': 0.0,
+                'y_max': LEFT_HASH - HASH_BUFFER,  # 18.36
+                'y_center': (0.0 + LEFT_HASH - HASH_BUFFER) / 2  # ~9.18
+            },
+            'left_hash': {
+                'y_min': LEFT_HASH - HASH_BUFFER,  # 18.36
+                'y_max': LEFT_HASH,  # 23.36
+                'y_center': LEFT_HASH - HASH_BUFFER / 2  # ~20.86
+            },
+            'middle': {
+                'y_min': LEFT_HASH,  # 23.36
+                'y_max': RIGHT_HASH,  # 29.64
+                'y_center': (LEFT_HASH + RIGHT_HASH) / 2  # 26.5
+            },
+            'right_hash': {
+                'y_min': RIGHT_HASH,  # 29.64
+                'y_max': RIGHT_HASH + HASH_BUFFER,  # 35.64
+                'y_center': RIGHT_HASH + HASH_BUFFER / 2  # ~32.14
+            },
+            'far_right': {
+                'y_min': RIGHT_HASH + HASH_BUFFER,  # 35.64
+                'y_max': FIELD_WIDTH,  # 53.3
+                'y_center': (RIGHT_HASH + HASH_BUFFER + FIELD_WIDTH) / 2  # ~44.47
+            }
+        }
+
+        # Depth zone boundaries (x-coordinates, relative to LOS)
+        # Depends on play direction
+        if play_direction == 'right':
+            # Play moving toward higher X values
+            depth_zones = {
+                'shallow': {
+                    'x_min': LOS,
+                    'x_max': LOS + 5,
+                    'x_center': LOS + 2.5
+                },
+                'intermediate': {
+                    'x_min': LOS + 5,
+                    'x_max': LOS + 15,
+                    'x_center': LOS + 10
+                },
+                'deep': {
+                    'x_min': LOS + 15,
+                    'x_max': 120.0,  # End zone
+                    'x_center': LOS + 25  # Approximate center for deep zone
+                }
+            }
+        else:  # play_direction == 'left'
+            # Play moving toward lower X values
+            depth_zones = {
+                'shallow': {
+                    'x_min': LOS - 5,
+                    'x_max': LOS,
+                    'x_center': LOS - 2.5
+                },
+                'intermediate': {
+                    'x_min': LOS - 15,
+                    'x_max': LOS - 5,
+                    'x_center': LOS - 10
+                },
+                'deep': {
+                    'x_min': 0.0,  # End zone
+                    'x_max': LOS - 15,
+                    'x_center': LOS - 25  # Approximate center for deep zone
+                }
+            }
+
+        # Combine depth and lateral to create 15 zones
+        zone_boundaries = {}
+        for depth_name, depth_bounds in depth_zones.items():
+            for lateral_name, lateral_bounds in lateral_zones.items():
+                zone_id = f"{depth_name}_{lateral_name}"
+
+                x_min = depth_bounds['x_min']
+                x_max = depth_bounds['x_max']
+                y_min = lateral_bounds['y_min']
+                y_max = lateral_bounds['y_max']
+
+                # Calculate area
+                width = x_max - x_min
+                height = y_max - y_min
+                area = width * height
+
+                zone_boundaries[zone_id] = {
+                    'x_min': x_min,
+                    'x_max': x_max,
+                    'y_min': y_min,
+                    'y_max': y_max,
+                    'center_x': depth_bounds['x_center'],
+                    'center_y': lateral_bounds['y_center'],
+                    'area': area,
+                    'depth_category': depth_name,
+                    'lateral_category': lateral_name
+                }
+
+        return zone_boundaries
+
+    def _assign_player_to_zone(self, x: float, y: float, zone_boundaries: Dict) -> str:
+        """
+        Assign player coordinates to a zone.
+
+        Args:
+            x: Player x-coordinate
+            y: Player y-coordinate
+            zone_boundaries: Dictionary of zone boundaries from _calculate_zone_boundaries
+
+        Returns:
+            Zone ID string (e.g., "shallow_middle") or None if out of bounds
+        """
+        # Check each zone
+        for zone_id, bounds in zone_boundaries.items():
+            if (bounds['x_min'] <= x < bounds['x_max'] and
+                bounds['y_min'] <= y < bounds['y_max']):
+                return zone_id
+
+        # Player is outside all zones (e.g., far sideline, end zone)
+        return None
+
+    def _calculate_zone_metrics(self, frame_data: pd.DataFrame, zone_boundaries: Dict,
+                                ball_land_x: float, ball_land_y: float) -> pd.DataFrame:
+        """
+        Calculate vulnerability metrics for all 15 zones in a single frame.
+
+        Args:
+            frame_data: DataFrame with all players in this frame
+            zone_boundaries: Dictionary of zone boundaries
+            ball_land_x: Ball landing x-coordinate
+            ball_land_y: Ball landing y-coordinate
+
+        Returns:
+            DataFrame with one row per zone (15 rows total)
+        """
+        # Assign each player to a zone
+        frame_data = frame_data.copy()
+        frame_data['zone_id'] = frame_data.apply(
+            lambda row: self._assign_player_to_zone(row['x'], row['y'], zone_boundaries),
+            axis=1
+        )
+
+        # Separate defenders and receivers
+        defenders = frame_data[frame_data['player_side'] == 'defense'].copy()
+        receivers = frame_data[frame_data['player_role'].isin([
+            'Targeted Receiver', 'Other Route Runner'
+        ])].copy()
+
+        # Calculate metrics for each zone
+        zone_metrics = []
+
+        for zone_id, bounds in zone_boundaries.items():
+            # Defenders in this zone
+            zone_defenders = defenders[defenders['zone_id'] == zone_id]
+            defender_count = len(zone_defenders)
+            defender_ids = ','.join(zone_defenders['nfl_id'].astype(str).tolist()) if defender_count > 0 else ''
+
+            # Receivers in this zone
+            zone_receivers = receivers[receivers['zone_id'] == zone_id]
+            receiver_count = len(zone_receivers)
+            route_runner_count = receiver_count  # All receivers we filtered are route runners
+            receiver_ids = ','.join(zone_receivers['nfl_id'].astype(str).tolist()) if receiver_count > 0 else ''
+
+            # Calculate nearest defender distance to zone center
+            zone_center_x = bounds['center_x']
+            zone_center_y = bounds['center_y']
+
+            if defender_count > 0:
+                # Distance from each defender to zone center
+                distances = np.sqrt(
+                    (zone_defenders['x'] - zone_center_x)**2 +
+                    (zone_defenders['y'] - zone_center_y)**2
+                )
+                nearest_defender_dist = distances.min()
+            else:
+                # No defenders in zone - use large distance
+                # Calculate from all defenders on field
+                if len(defenders) > 0:
+                    distances = np.sqrt(
+                        (defenders['x'] - zone_center_x)**2 +
+                        (defenders['y'] - zone_center_y)**2
+                    )
+                    nearest_defender_dist = distances.min()
+                else:
+                    nearest_defender_dist = 50.0  # Maximum field dimension
+
+            # Coverage density (defenders per zone area)
+            coverage_density = defender_count / (bounds['area'] / 100) if bounds['area'] > 0 else 0
+
+            # Vulnerability score: higher = more vulnerable
+            # Combines distance and count - empty zones with far defenders = most vulnerable
+            zone_void_score = nearest_defender_dist * (1.0 / (defender_count + 0.1))
+
+            # Check if this is the target zone
+            target_zone_id = self._assign_player_to_zone(ball_land_x, ball_land_y, zone_boundaries)
+            is_target_zone = (zone_id == target_zone_id)
+
+            zone_metrics.append({
+                'zone_id': zone_id,
+                'zone_depth_category': bounds['depth_category'],
+                'zone_lateral_category': bounds['lateral_category'],
+                'zone_center_x': zone_center_x,
+                'zone_center_y': zone_center_y,
+                'zone_area': bounds['area'],
+                'defender_count': defender_count,
+                'defender_ids': defender_ids,
+                'nearest_defender_dist': nearest_defender_dist,
+                'coverage_density': coverage_density,
+                'zone_void_score': zone_void_score,
+                'receiver_count': receiver_count,
+                'route_runner_count': route_runner_count,
+                'receiver_ids': receiver_ids,
+                'is_target_zone': is_target_zone
+            })
+
+        return pd.DataFrame(zone_metrics)
+
+    def create_zone_vulnerability_timeseries(self) -> pd.DataFrame:
+        """
+        Create zone vulnerability timeseries dataset.
+
+        Analyzes defensive zone occupation and vulnerability across 15 LOS-relative zones
+        for every frame of every play. Tracks how zones evolve from pre-snap through
+        route development to post-throw.
+
+        Returns:
+            DataFrame with zone vulnerability metrics over time
+            One row per zone per frame per play (~5-10M rows)
+        """
+        logger.info("Creating zone vulnerability timeseries dataset...")
+        logger.info("  Analyzing 15-zone grid across all plays and frames...")
+
+        # Get list of all plays
+        plays = self.master_input[['game_id', 'play_id', 'absolute_yardline_number',
+                                    'play_direction', 'ball_land_x', 'ball_land_y',
+                                    'week']].drop_duplicates()
+
+        logger.info(f"  Processing {len(plays):,} plays...")
+
+        all_zone_data = []
+        plays_processed = 0
+
+        for _, play_info in plays.iterrows():
+            if plays_processed % 1000 == 0 and plays_processed > 0:
+                logger.info(f"    Processed {plays_processed:,} / {len(plays):,} plays...")
+
+            game_id = play_info['game_id']
+            play_id = play_info['play_id']
+            LOS = play_info['absolute_yardline_number']
+            play_direction = play_info['play_direction']
+            ball_land_x = play_info['ball_land_x']
+            ball_land_y = play_info['ball_land_y']
+            week = play_info['week']
+
+            # Calculate zone boundaries for this play
+            zone_boundaries = self._calculate_zone_boundaries(LOS, play_direction)
+
+            # Get all frames for this play (input only - pre-snap through throw)
+            play_frames = self.master_input[
+                (self.master_input['game_id'] == game_id) &
+                (self.master_input['play_id'] == play_id)
+            ].copy()
+
+            if len(play_frames) == 0:
+                continue
+
+            # Get throw frame (last input frame)
+            throw_frame = play_frames['frame_id'].max()
+
+            # Process each frame
+            for frame_id in play_frames['frame_id'].unique():
+                frame_data = play_frames[play_frames['frame_id'] == frame_id]
+
+                # Determine phase
+                if frame_id == 1:
+                    phase = 'pre_snap'
+                elif frame_id < throw_frame:
+                    phase = 'route_development'
+                elif frame_id == throw_frame:
+                    phase = 'at_throw'
+                else:
+                    phase = 'post_throw'  # Shouldn't occur in input data
+
+                # Calculate zone metrics for this frame
+                zone_metrics_df = self._calculate_zone_metrics(
+                    frame_data, zone_boundaries, ball_land_x, ball_land_y
+                )
+
+                # Add play context
+                zone_metrics_df['game_id'] = game_id
+                zone_metrics_df['play_id'] = play_id
+                zone_metrics_df['frame_id'] = frame_id
+                zone_metrics_df['LOS_position'] = LOS
+                zone_metrics_df['play_direction'] = play_direction
+                zone_metrics_df['phase'] = phase
+                zone_metrics_df['ball_land_x'] = ball_land_x
+                zone_metrics_df['ball_land_y'] = ball_land_y
+                zone_metrics_df['week'] = week
+
+                all_zone_data.append(zone_metrics_df)
+
+            plays_processed += 1
+
+        # Combine all zone data
+        logger.info("  Combining zone data from all plays...")
+        zone_timeseries = pd.concat(all_zone_data, ignore_index=True)
+
+        # Reorder columns for clarity
+        columns_order = [
+            'game_id', 'play_id', 'frame_id', 'week',
+            'zone_id', 'zone_depth_category', 'zone_lateral_category',
+            'zone_center_x', 'zone_center_y', 'zone_area',
+            'LOS_position', 'play_direction', 'phase',
+            'ball_land_x', 'ball_land_y',
+            'defender_count', 'defender_ids', 'nearest_defender_dist',
+            'coverage_density', 'zone_void_score',
+            'receiver_count', 'route_runner_count', 'receiver_ids',
+            'is_target_zone'
+        ]
+
+        zone_timeseries = zone_timeseries[columns_order]
+
+        # Summary statistics
+        total_zones = len(zone_timeseries)
+        total_plays = zone_timeseries[['game_id', 'play_id']].drop_duplicates().shape[0]
+        avg_frames_per_play = zone_timeseries.groupby(['game_id', 'play_id'])['frame_id'].nunique().mean()
+        avg_void_score = zone_timeseries['zone_void_score'].mean()
+        max_void_score = zone_timeseries['zone_void_score'].max()
+
+        logger.info(f"  Created dataset with {total_zones:,} zone-frame records")
+        logger.info(f"  Total plays: {total_plays:,}")
+        logger.info(f"  Avg frames per play: {avg_frames_per_play:.1f}")
+        logger.info(f"  Avg vulnerability score: {avg_void_score:.2f}")
+        logger.info(f"  Max vulnerability score: {max_void_score:.2f}")
+
+        # Most vulnerable zones
+        avg_by_zone = zone_timeseries.groupby('zone_id')['zone_void_score'].mean().sort_values(ascending=False)
+        logger.info(f"  Top 3 most vulnerable zones (avg):")
+        for zone, score in avg_by_zone.head(3).items():
+            logger.info(f"    {zone:20s}: {score:.2f}")
+
+        return zone_timeseries
+
     def create_spatial_features(self) -> pd.DataFrame:
         """
         Create spatial context features with relative positions and distances.
@@ -722,46 +1088,50 @@ class NFLDataConsolidator:
 
         try:
             # Step 1: Load and consolidate raw data
-            logger.info("\n[1/9] Consolidating input data...")
+            logger.info("\n[1/10] Consolidating input data...")
             self.master_input = self.consolidate_input_data()
             self.save_dataset(self.master_input, 'master_input')
 
-            logger.info("\n[2/9] Consolidating output data...")
+            logger.info("\n[2/10] Consolidating output data...")
             self.master_output = self.consolidate_output_data()
             self.save_dataset(self.master_output, 'master_output')
 
-            logger.info("\n[3/9] Loading supplementary data...")
+            logger.info("\n[3/10] Loading supplementary data...")
             self.supplementary = self.load_supplementary_data()
             self.save_dataset(self.supplementary, 'supplementary')
 
             # Step 2: Create derived datasets
-            logger.info("\n[4/9] Creating play-level dataset...")
+            logger.info("\n[4/10] Creating play-level dataset...")
             play_dataset = self.create_play_level_dataset()
             self.save_dataset(play_dataset, 'play_level')
 
-            logger.info("\n[5/9] Creating trajectory dataset...")
+            logger.info("\n[5/10] Creating trajectory dataset...")
             trajectory_dataset = self.create_trajectory_dataset()
             self.save_dataset(trajectory_dataset, 'trajectories')
 
-            logger.info("\n[6/9] Creating player analysis dataset...")
+            logger.info("\n[6/10] Creating player analysis dataset...")
             player_dataset = self.create_player_analysis_dataset()
             self.save_dataset(player_dataset, 'player_analysis')
 
-            logger.info("\n[7/9] Creating route analysis dataset...")
+            logger.info("\n[7/10] Creating route analysis dataset...")
             route_dataset = self.create_route_analysis_dataset()
             self.save_dataset(route_dataset, 'route_analysis')
 
-            logger.info("\n[8/9] Creating route trajectories dataset...")
+            logger.info("\n[8/10] Creating route trajectories dataset...")
             route_trajectories = self.create_route_trajectories_dataset()
             self.save_dataset(route_trajectories, 'route_trajectories')
 
+            logger.info("\n[9/10] Creating zone vulnerability timeseries dataset...")
+            zone_vulnerability = self.create_zone_vulnerability_timeseries()
+            self.save_dataset(zone_vulnerability, 'zone_vulnerability_timeseries')
+
             # Step 3: Create spatial features (optional - can be slow)
             if not skip_spatial:
-                logger.info("\n[9/9] Creating spatial features...")
+                logger.info("\n[10/10] Creating spatial features...")
                 spatial_features = self.create_spatial_features()
                 self.save_dataset(spatial_features, 'spatial_features')
             else:
-                logger.info("\n[9/9] Skipping spatial features (use skip_spatial=False to include)")
+                logger.info("\n[10/10] Skipping spatial features (use skip_spatial=False to include)")
 
             # Step 4: Generate summary
             logger.info("\n" + "=" * 70)

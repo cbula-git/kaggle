@@ -217,6 +217,7 @@ animator.save(ani, 'my_play.mp4', fps=10)
    - `player_analysis.parquet` - Player-centric features
    - `route_analysis.parquet` - Receiver route metrics and success rates
    - `route_trajectories.parquet` - Normalized route trajectories for visualization
+   - `zone_vulnerability_timeseries.parquet` - Defensive zone vulnerability over time (15 zones per frame)
    - `spatial_features.parquet` - Relative positions/distances
 
 4. **Data Access** (`nfl_analysis.io`)
@@ -420,6 +421,81 @@ Features:
 - **Blue star** = Starting position (all routes normalized to 0,0)
 - Route type labels at endpoints
 - Completion percentage in title
+
+### Zone Vulnerability Analysis
+The `ZoneVulnerabilityVisualizer` class provides defensive zone analysis across 15 LOS-relative zones:
+
+**Zone Grid System** (15 zones = 3 depths × 5 lateral positions):
+- **Depth zones**: Shallow (0-5 yds), Intermediate (5-15 yds), Deep (15+ yds) past LOS
+- **Lateral zones**: Far Left, Left Hash, Middle, Right Hash, Far Right (based on exact NFL hash marks at 23.36 and 29.64 yards)
+- **LOS-relative**: Zones adjust based on field position and play direction
+
+**Zone Vulnerability Dataset** (`zone_vulnerability_timeseries.parquet`):
+- One row per zone per frame per play (~5-10M rows)
+- Tracks defender positioning and vulnerability metrics frame-by-frame
+- Phases: `pre_snap`, `route_development`, `at_throw`
+
+**Key Metrics**:
+- `defender_count` - Number of defenders in zone
+- `nearest_defender_dist` - Distance from zone center to nearest defender
+- `coverage_density` - Defenders per 100 square yards
+- `zone_void_score` - Vulnerability metric (higher = more vulnerable)
+  - Formula: `nearest_defender_dist × (1 / (defender_count + 0.1))`
+- `is_target_zone` - Boolean indicating where ball lands
+- `receiver_count` - Number of route runners in zone
+
+**Example Usage**:
+```python
+from nfl_analysis import ZoneVulnerabilityVisualizer
+
+# Initialize visualizer
+visualizer = ZoneVulnerabilityVisualizer(data_dir='data/consolidated')
+visualizer.load_zone_data()
+
+# Plot zone grid heatmap for a specific frame
+fig, ax = visualizer.plot_zone_grid(
+    game_id=2023090700,
+    play_id=1679,
+    frame_id=10,
+    metric='zone_void_score',  # or 'defender_count', 'nearest_defender_dist'
+    figsize=(14, 10)
+)
+
+# Track evolution of a specific zone over time
+fig, axes = visualizer.plot_zone_evolution(
+    game_id=2023090700,
+    play_id=1679,
+    zone_id='deep_middle',
+    figsize=(12, 6)
+)
+
+# Compare target zones across multiple plays
+fig, axes = visualizer.plot_target_zone_comparison(
+    game_ids=[2023090700, 2023090701, 2023090702],
+    play_ids=[1679, 2345, 3456],
+    figsize=(14, 8)
+)
+```
+
+**Visualization Features**:
+- Heatmap grids showing 15-zone vulnerability
+- Time-series evolution of individual zones
+- Phase-based color coding (pre-snap, route development, at throw)
+- Target zone highlighting
+- Defender count and distance tracking
+
+**Analysis Use Cases**:
+- Identify which zones are most/least vulnerable per defensive scheme
+- Track how defenses evolve from pre-snap to throw
+- Analyze zone abandonment patterns
+- Find target zones and their vulnerability at throw
+- Compare defensive effectiveness across teams
+
+**Key Design Considerations**:
+- Zones are LOS-relative (adjust each play based on field position)
+- Play direction normalized (zones flip for left-direction plays)
+- Hash-based lateral divisions use exact NFL measurements
+- Void score combines both defender proximity and count
 
 ### Feature Engineering
 Notebooks explore various features:
