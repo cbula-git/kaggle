@@ -717,10 +717,15 @@ class NFLDataConsolidator:
         )
 
         # Separate defenders and receivers
-        defenders = frame_data[frame_data['player_side'] == 'defense'].copy()
+        defenders = frame_data[frame_data['player_side'] == 'Defense'].copy()
         receivers = frame_data[frame_data['player_role'].isin([
             'Targeted Receiver', 'Other Route Runner'
         ])].copy()
+
+        # Sanity check: there should always be defenders on the field
+        if len(defenders) == 0:
+            logger.warning(f"WARNING: No defenders found in frame! This indicates a data issue.")
+            logger.warning(f"  Available player_side values: {frame_data['player_side'].unique()}")
 
         # Calculate metrics for each zone
         zone_metrics = []
