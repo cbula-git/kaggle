@@ -299,6 +299,258 @@ class NFLDataConsolidator:
 
         return player_dataset
 
+    def create_route_analysis_dataset(self) -> pd.DataFrame:
+        """
+        Create route analysis dataset for receiver route visualization and success analysis.
+
+        One row per targeted receiver per play with:
+        - Route information (type, result)
+        - Position at pass release
+        - Position at ball landing
+        - Distance metrics
+        - Route characteristics
+
+        Returns:
+            DataFrame with route analysis features
+        """
+        logger.info("Creating route analysis dataset...")
+
+        # Get targeted receivers at pass release (last input frame)
+        targeted_receivers = self.master_input[
+            self.master_input['player_role'] == 'Targeted Receiver'
+        ].copy()
+
+        # Get last frame (pass release) for each targeted receiver
+        route_data = targeted_receivers.loc[
+            targeted_receivers.groupby(['game_id', 'play_id', 'nfl_id'])['frame_id'].idxmax()
+        ].copy()
+
+        # Get final post-pass position for each receiver
+        final_positions = self.master_output.loc[
+            self.master_output.groupby(['game_id', 'play_id', 'nfl_id'])['frame_id'].idxmax()
+        ][['game_id', 'play_id', 'nfl_id', 'x', 'y']].rename(
+            columns={'x': 'x_at_landing', 'y': 'y_at_landing'}
+        )
+
+        # Count frames in post-pass trajectory
+        frames_count = self.master_output.groupby(
+            ['game_id', 'play_id', 'nfl_id']
+        ).size().reset_index(name='frames_post_pass')
+
+        # Merge everything
+        route_dataset = route_data.merge(
+            final_positions,
+            on=['game_id', 'play_id', 'nfl_id'],
+            how='left'
+        ).merge(
+            frames_count,
+            on=['game_id', 'play_id', 'nfl_id'],
+            how='left'
+        ).merge(
+            self.supplementary[['game_id', 'play_id', 'route_of_targeted_receiver',
+                               'pass_result', 'team_coverage_type', 'team_coverage_man_zone',
+                               'offense_formation', 'receiver_alignment']],
+            on=['game_id', 'play_id'],
+            how='left'
+        )
+
+        # Rename columns for clarity
+        route_dataset = route_dataset.rename(columns={
+            'x': 'x_at_release',
+            'y': 'y_at_release',
+            's': 'speed_at_release',
+            'a': 'acceleration_at_release',
+            'dir': 'direction_at_release',
+            'o': 'orientation_at_release',
+            'route_of_targeted_receiver': 'route_type'
+        })
+
+        # Calculate distance to ball at landing
+        route_dataset['dist_to_ball_at_landing'] = np.sqrt(
+            (route_dataset['x_at_landing'] - route_dataset['ball_land_x'])**2 +
+            (route_dataset['y_at_landing'] - route_dataset['ball_land_y'])**2
+        )
+
+        # Calculate route metrics (raw, before normalization)
+        route_dataset['route_depth'] = route_dataset['x_at_landing'] - route_dataset['x_at_release']
+        route_dataset['route_width'] = route_dataset['y_at_landing'] - route_dataset['y_at_release']
+
+        # Normalize route metrics based on play direction
+        # When play_direction is 'left', offense moves toward lower X values
+        # So we need to flip the sign to get positive depth for downfield routes
+        left_plays = route_dataset['play_direction'] == 'left'
+        route_dataset.loc[left_plays, 'route_depth'] = -route_dataset.loc[left_plays, 'route_depth']
+        route_dataset.loc[left_plays, 'route_width'] = -route_dataset.loc[left_plays, 'route_width']
+
+        # Calculate total route distance (using normalized depth/width)
+        route_dataset['route_distance'] = np.sqrt(
+            route_dataset['route_depth']**2 + route_dataset['route_width']**2
+        )
+
+        # Calculate distance to ball at release
+        route_dataset['dist_to_ball_at_release'] = np.sqrt(
+            (route_dataset['x_at_release'] - route_dataset['ball_land_x'])**2 +
+            (route_dataset['y_at_release'] - route_dataset['ball_land_y'])**2
+        )
+
+        # Success indicator (completion)
+        route_dataset['is_completion'] = (route_dataset['pass_result'] == 'C').astype(int)
+
+        logger.info(f"  Created dataset with {len(route_dataset):,} routes")
+        logger.info(f"  Route types: {route_dataset['route_type'].nunique()}")
+        logger.info(f"  Completion rate: {route_dataset['is_completion'].mean()*100:.1f}%")
+
+        return route_dataset
+
+    def create_route_trajectories_dataset(self) -> pd.DataFrame:
+        """
+        Create normalized route trajectories for visualization and comparison.
+
+        Normalizes all routes to start at origin (0, 0) with play direction standardized,
+        allowing direct comparison and overlay of route shapes across players and plays.
+
+        One row per frame per targeted receiver route with:
+        - Normalized coordinates (relative to route start)
+        - Original coordinates preserved
+        - Frame sequence within route
+        - Distance traveled metrics
+        - Route metadata for filtering
+
+        Returns:
+            DataFrame with normalized route trajectories
+        """
+        logger.info("Creating route trajectories dataset...")
+        logger.info("  This will normalize all targeted receiver routes to common coordinates...")
+
+        # First, get the list of targeted receiver routes with play direction
+        targeted_routes = self.master_input[
+            self.master_input['player_role'] == 'Targeted Receiver'
+        ][['game_id', 'play_id', 'nfl_id', 'play_direction']].drop_duplicates()
+
+        # Merge with supplementary data to get route type and other metadata
+        route_metadata = targeted_routes.merge(
+            self.supplementary[['game_id', 'play_id', 'route_of_targeted_receiver',
+                               'pass_result', 'team_coverage_man_zone',
+                               'offense_formation']],
+            on=['game_id', 'play_id'],
+            how='left'
+        )
+        route_metadata = route_metadata.rename(columns={
+            'route_of_targeted_receiver': 'route_type'
+        })
+
+        logger.info(f"  Processing {len(route_metadata):,} targeted receiver routes...")
+
+        # Now get trajectories for each route
+        all_trajectories = []
+
+        for idx, route_info in route_metadata.iterrows():
+            if idx % 1000 == 0 and idx > 0:
+                logger.info(f"    Processed {idx:,} / {len(route_metadata):,} routes...")
+
+            game_id = route_info['game_id']
+            play_id = route_info['play_id']
+            nfl_id = route_info['nfl_id']
+            route_type = route_info['route_type']
+            play_direction = route_info['play_direction']
+            pass_result = route_info['pass_result']
+
+            # Get pre-pass trajectory
+            pre_pass = self.master_input[
+                (self.master_input['game_id'] == game_id) &
+                (self.master_input['play_id'] == play_id) &
+                (self.master_input['nfl_id'] == nfl_id)
+            ][['frame_id', 'x', 'y', 's', 'a', 'dir', 'o', 'player_name', 'player_position']].copy().sort_values('frame_id')
+            pre_pass['phase'] = 'pre_pass'
+
+            # Get post-pass trajectory (need to adjust frame_ids to be continuous)
+            post_pass = self.master_output[
+                (self.master_output['game_id'] == game_id) &
+                (self.master_output['play_id'] == play_id) &
+                (self.master_output['nfl_id'] == nfl_id)
+            ][['frame_id', 'x', 'y']].copy().sort_values('frame_id')
+
+            # Adjust post-pass frame IDs to be continuous with pre-pass
+            if len(pre_pass) > 0 and len(post_pass) > 0:
+                max_pre_pass_frame = pre_pass['frame_id'].max()
+                post_pass['frame_id'] = post_pass['frame_id'] + max_pre_pass_frame
+
+            post_pass['phase'] = 'post_pass'
+
+            # Combine trajectories (they're already sorted within phase, now concat in order)
+            full_traj = pd.concat([pre_pass, post_pass], ignore_index=True)
+
+            if len(full_traj) == 0:
+                continue
+
+            # Get starting position (first frame)
+            start_x = full_traj.iloc[0]['x']
+            start_y = full_traj.iloc[0]['y']
+
+            # Normalize coordinates to start at origin
+            full_traj['x_norm'] = full_traj['x'] - start_x
+            full_traj['y_norm'] = full_traj['y'] - start_y
+
+            # Apply play direction normalization
+            # If play goes left, flip coordinates so all routes go "right"
+            if play_direction == 'left':
+                full_traj['x_norm'] = -full_traj['x_norm']
+                full_traj['y_norm'] = -full_traj['y_norm']
+
+            # Add frame sequence (0-indexed within this route)
+            full_traj['frame_sequence'] = range(len(full_traj))
+
+            # Calculate cumulative distance traveled
+            full_traj['dist_from_start'] = np.sqrt(
+                full_traj['x_norm']**2 + full_traj['y_norm']**2
+            )
+
+            # Add route metadata
+            full_traj['game_id'] = game_id
+            full_traj['play_id'] = play_id
+            full_traj['nfl_id'] = nfl_id
+            full_traj['route_type'] = route_type
+            full_traj['pass_result'] = pass_result
+            full_traj['play_direction'] = play_direction
+            full_traj['is_completion'] = 1 if pass_result == 'C' else 0
+            full_traj['team_coverage_man_zone'] = route_info['team_coverage_man_zone']
+            full_traj['offense_formation'] = route_info['offense_formation']
+
+            # Preserve original coordinates
+            full_traj = full_traj.rename(columns={'x': 'x_original', 'y': 'y_original'})
+
+            # Get player info from first frame (where it exists)
+            if 'player_name' in full_traj.columns:
+                player_name = full_traj['player_name'].iloc[0] if pd.notna(full_traj['player_name'].iloc[0]) else None
+                player_position = full_traj['player_position'].iloc[0] if pd.notna(full_traj['player_position'].iloc[0]) else None
+                full_traj['player_name'] = player_name
+                full_traj['player_position'] = player_position
+
+            all_trajectories.append(full_traj)
+
+        # Combine all routes
+        route_trajectories = pd.concat(all_trajectories, ignore_index=True)
+
+        # Select and order columns
+        columns_order = [
+            'game_id', 'play_id', 'nfl_id', 'frame_id', 'frame_sequence',
+            'player_name', 'player_position', 'route_type', 'pass_result', 'is_completion',
+            'play_direction', 'phase',
+            'x_norm', 'y_norm', 'x_original', 'y_original',
+            'dist_from_start', 's', 'a', 'dir', 'o',
+            'team_coverage_man_zone', 'offense_formation'
+        ]
+
+        # Filter to available columns
+        columns_order = [col for col in columns_order if col in route_trajectories.columns]
+        route_trajectories = route_trajectories[columns_order]
+
+        logger.info(f"  Created dataset with {len(route_trajectories):,} frames")
+        logger.info(f"  Total routes: {route_trajectories.groupby(['game_id', 'play_id', 'nfl_id']).ngroups:,}")
+        logger.info(f"  Avg frames per route: {len(route_trajectories) / route_trajectories.groupby(['game_id', 'play_id', 'nfl_id']).ngroups:.1f}")
+
+        return route_trajectories
+
     def create_spatial_features(self) -> pd.DataFrame:
         """
         Create spatial context features with relative positions and distances.
@@ -470,38 +722,46 @@ class NFLDataConsolidator:
 
         try:
             # Step 1: Load and consolidate raw data
-            logger.info("\n[1/7] Consolidating input data...")
+            logger.info("\n[1/9] Consolidating input data...")
             self.master_input = self.consolidate_input_data()
             self.save_dataset(self.master_input, 'master_input')
 
-            logger.info("\n[2/7] Consolidating output data...")
+            logger.info("\n[2/9] Consolidating output data...")
             self.master_output = self.consolidate_output_data()
             self.save_dataset(self.master_output, 'master_output')
 
-            logger.info("\n[3/7] Loading supplementary data...")
+            logger.info("\n[3/9] Loading supplementary data...")
             self.supplementary = self.load_supplementary_data()
             self.save_dataset(self.supplementary, 'supplementary')
 
             # Step 2: Create derived datasets
-            logger.info("\n[4/7] Creating play-level dataset...")
+            logger.info("\n[4/9] Creating play-level dataset...")
             play_dataset = self.create_play_level_dataset()
             self.save_dataset(play_dataset, 'play_level')
 
-            logger.info("\n[5/7] Creating trajectory dataset...")
+            logger.info("\n[5/9] Creating trajectory dataset...")
             trajectory_dataset = self.create_trajectory_dataset()
             self.save_dataset(trajectory_dataset, 'trajectories')
 
-            logger.info("\n[6/7] Creating player analysis dataset...")
+            logger.info("\n[6/9] Creating player analysis dataset...")
             player_dataset = self.create_player_analysis_dataset()
             self.save_dataset(player_dataset, 'player_analysis')
 
+            logger.info("\n[7/9] Creating route analysis dataset...")
+            route_dataset = self.create_route_analysis_dataset()
+            self.save_dataset(route_dataset, 'route_analysis')
+
+            logger.info("\n[8/9] Creating route trajectories dataset...")
+            route_trajectories = self.create_route_trajectories_dataset()
+            self.save_dataset(route_trajectories, 'route_trajectories')
+
             # Step 3: Create spatial features (optional - can be slow)
             if not skip_spatial:
-                logger.info("\n[7/7] Creating spatial features...")
+                logger.info("\n[9/9] Creating spatial features...")
                 spatial_features = self.create_spatial_features()
                 self.save_dataset(spatial_features, 'spatial_features')
             else:
-                logger.info("\n[7/7] Skipping spatial features (use skip_spatial=False to include)")
+                logger.info("\n[9/9] Skipping spatial features (use skip_spatial=False to include)")
 
             # Step 4: Generate summary
             logger.info("\n" + "=" * 70)
