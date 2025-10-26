@@ -9,6 +9,7 @@ This package provides tools for:
 - Exploratory data analysis
 - Play animation and visualization
 - Route analysis and visualization
+- Zone vulnerability analysis
 - Feature engineering utilities
 - Coverage analysis and defensive metrics
 """
@@ -26,6 +27,7 @@ from nfl_analysis.visualization.animator import PlayAnimator
 from nfl_analysis.visualization.field_renderer import FieldRenderer
 from nfl_analysis.visualization.coverage_visualizer import CoverageVisualizer
 from nfl_analysis.visualization.route_visualizer import RouteVisualizer
+from nfl_analysis.visualization.zone_visualizer import ZoneVulnerabilityVisualizer
 
 __all__ = [
     "NFLDataConsolidator",
@@ -37,4 +39,5 @@ __all__ = [
     "FieldRenderer",
     "CoverageVisualizer",
     "RouteVisualizer",
+    "ZoneVulnerabilityVisualizer",
 ]
