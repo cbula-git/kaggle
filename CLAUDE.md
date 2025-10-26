@@ -24,6 +24,7 @@ kaggle/
 │   │   ├── animator.py            # PlayAnimator class
 │   │   ├── field_renderer.py     # FieldRenderer for drawing fields
 │   │   ├── coverage_visualizer.py # Coverage analysis plots
+│   │   ├── route_visualizer.py    # Route analysis plots
 │   │   ├── plot_utils.py          # Plotting helper utilities
 │   │   └── config.py              # Unified styling and configuration
 │   └── utils/                     # Shared utilities
@@ -214,6 +215,8 @@ animator.save(ani, 'my_play.mp4', fps=10)
    - `play_level.parquet` - Play-aggregated statistics
    - `trajectories.parquet` - Complete player paths
    - `player_analysis.parquet` - Player-centric features
+   - `route_analysis.parquet` - Receiver route metrics and success rates
+   - `route_trajectories.parquet` - Normalized route trajectories for visualization
    - `spatial_features.parquet` - Relative positions/distances
 
 4. **Data Access** (`nfl_analysis.io`)
@@ -300,6 +303,7 @@ The visualization module (`nfl_analysis.visualization`) provides:
 - `PlayAnimator` class for creating play animations
 - `FieldRenderer` class for drawing NFL fields with proper dimensions
 - `CoverageVisualizer` class for coverage analysis plots
+- `RouteVisualizer` class for route analysis and receiver performance
 - `CoveragePlotHelper` for reusable plotting utilities
 - Automatic loading and merging of play data
 - Color-coded player roles and trajectories
@@ -330,6 +334,93 @@ ani = animator.create_animation(game_id=2023090700, play_id=1679, interval=100)
 animator.save(ani, 'amazing_play.gif', fps=10)
 ```
 
+### Route Analysis and Visualization
+The `RouteVisualizer` class provides comprehensive route analysis tools:
+
+**Features:**
+- Route frequency distribution
+- Success rate (completion %) by route type
+- Average separation (distance to ball at landing)
+- Combined dashboard view
+- Player-specific filtering
+
+**Example Usage:**
+```python
+from nfl_analysis import RouteVisualizer
+
+# Initialize visualizer
+visualizer = RouteVisualizer(data_dir='data/consolidated')
+
+# Load route data
+route_data = visualizer.load_route_data()
+
+# Plot route frequency for all players
+fig, ax = visualizer.plot_route_frequency()
+
+# Plot success rate by route type
+fig, ax = visualizer.plot_route_success_rate(min_attempts=10)
+
+# Plot average separation by route type
+fig, ax = visualizer.plot_route_separation(min_attempts=10)
+
+# Create comprehensive dashboard
+fig, axes = visualizer.plot_route_dashboard(min_attempts=10)
+
+# Filter by specific player
+fig, ax = visualizer.plot_route_frequency(player_name="Tyreek")
+fig, ax = visualizer.plot_route_success_rate(nfl_id=47851)
+```
+
+**Route Analysis Dataset:**
+The `route_analysis.parquet` dataset contains one row per targeted receiver per play with:
+- Route type (HITCH, OUT, FLAT, CROSS, GO, IN, SLANT, POST, ANGLE, CORNER, SCREEN, WHEEL)
+- Position at pass release (x, y, speed, acceleration, direction)
+- Position at ball landing (x, y)
+- Distance to ball at landing (`dist_to_ball_at_landing`)
+- Route metrics (depth, width, distance) - **normalized by play direction**
+- Success indicator (`is_completion`)
+- Coverage context (coverage type, formation, alignment)
+
+**Route Trajectories Dataset:**
+The `route_trajectories.parquet` dataset contains normalized frame-by-frame route trajectories for visualization:
+- Normalized coordinates (`x_norm`, `y_norm`) - all routes start at origin (0,0)
+- Original coordinates preserved (`x_original`, `y_original`)
+- Play direction standardized - all routes normalized to go "right"
+- Frame sequence within each route (`frame_sequence`)
+- Distance traveled from start (`dist_from_start`)
+- Phase indicator (`pre_pass` or `post_pass`)
+- Route metadata (type, completion, coverage)
+
+**Route Overlay Visualization:**
+Visualize all routes for a player in a game with color-coded completion status:
+
+```python
+from nfl_analysis.visualization import RouteVisualizer
+
+visualizer = RouteVisualizer(data_dir='data/consolidated')
+
+# Plot all routes for a player in a specific game
+fig, ax = visualizer.plot_player_routes_overlay(
+    game_id=2023123105,
+    player_name='Davante Adams',
+    save_path='davante_routes.png'
+)
+
+# Use NFL ID for exact matching
+fig, ax = visualizer.plot_player_routes_overlay(
+    game_id=2023091709,
+    nfl_id=56042,  # Puka Nacua
+    figsize=(18, 12)
+)
+```
+
+Features:
+- **Green routes** = Completions
+- **Red routes** = Incompletions
+- **Blue star** = Starting position (all routes normalized to 0,0)
+- Route type labels at endpoints
+- Completion percentage in title
+
 ### Feature Engineering
 Notebooks explore various features:
 - Distance metrics (Euclidean distance between players)
@@ -358,7 +449,7 @@ If transitioning from the old structure:
 Use the new package imports:
 ```python
 from nfl_analysis import NFLDataConsolidator, NFLDataLoader, NFLDataExplorer
-from nfl_analysis import PlayAnimator, FieldRenderer, CoverageVisualizer
+from nfl_analysis import PlayAnimator, FieldRenderer, CoverageVisualizer, RouteVisualizer
 from nfl_analysis.utils.metrics import calculate_distance, calculate_separation
 from nfl_analysis.visualization import CoveragePlotHelper
 ```
