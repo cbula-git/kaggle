@@ -674,7 +674,8 @@ class NFLDataConsolidator:
 
         return zone_boundaries
 
-    def _assign_player_to_zone(self, x: float, y: float, zone_boundaries: Dict) -> str:
+    def _assign_player_to_zone(self, x: float, y: float, zone_boundaries: Dict,
+                                find_nearest: bool = False) -> str:
         """
         Assign player coordinates to a zone.
 
@@ -682,17 +683,37 @@ class NFLDataConsolidator:
             x: Player x-coordinate
             y: Player y-coordinate
             zone_boundaries: Dictionary of zone boundaries from _calculate_zone_boundaries
+            find_nearest: If True and coordinates are out of bounds, find nearest zone by
+                         Euclidean distance to zone centers. Used for ball landings that go
+                         out of bounds (e.g., sideline passes). Approximately 3.3% of plays
+                         have out-of-bounds ball landings (Y < 0 or Y > 53.3).
 
         Returns:
-            Zone ID string (e.g., "shallow_middle") or None if out of bounds
+            Zone ID string (e.g., "shallow_middle") or None if out of bounds and find_nearest=False
         """
-        # Check each zone
+        # Check each zone for exact match
         for zone_id, bounds in zone_boundaries.items():
             if (bounds['x_min'] <= x < bounds['x_max'] and
                 bounds['y_min'] <= y < bounds['y_max']):
                 return zone_id
 
         # Player is outside all zones (e.g., far sideline, end zone)
+        if find_nearest:
+            # Find the nearest zone by calculating distance to each zone's center
+            min_dist = float('inf')
+            nearest_zone = None
+
+            for zone_id, bounds in zone_boundaries.items():
+                zone_center_x = bounds['center_x']
+                zone_center_y = bounds['center_y']
+                dist = np.sqrt((x - zone_center_x)**2 + (y - zone_center_y)**2)
+
+                if dist < min_dist:
+                    min_dist = dist
+                    nearest_zone = zone_id
+
+            return nearest_zone
+
         return None
 
     def _calculate_zone_metrics(self, frame_data: pd.DataFrame, zone_boundaries: Dict,
@@ -773,7 +794,9 @@ class NFLDataConsolidator:
             zone_void_score = nearest_defender_dist * (1.0 / (defender_count + 0.1))
 
             # Check if this is the target zone
-            target_zone_id = self._assign_player_to_zone(ball_land_x, ball_land_y, zone_boundaries)
+            # Use find_nearest=True to handle out-of-bounds ball landings (e.g., sidelines)
+            target_zone_id = self._assign_player_to_zone(ball_land_x, ball_land_y, zone_boundaries,
+                                                          find_nearest=True)
             is_target_zone = (zone_id == target_zone_id)
 
             zone_metrics.append({

@@ -496,6 +496,7 @@ fig, axes = visualizer.plot_target_zone_comparison(
 - Play direction normalized (zones flip for left-direction plays)
 - Hash-based lateral divisions use exact NFL measurements
 - Void score combines both defender proximity and count
+- **Out-of-bounds ball landings**: ~3.3% of plays have ball landing outside field boundaries (Y < 0 or Y > 53.3). These are assigned to the nearest zone by calculating Euclidean distance to all zone centers. This ensures `is_target_zone` is always populated.
 
 ### Feature Engineering
 Notebooks explore various features:
